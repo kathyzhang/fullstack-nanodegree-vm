@@ -6,4 +6,17 @@
 -- You can write comments in this file by starting them with two dashes, like
 -- these lines here.
 
+create table players(
+    p_id serial primary key,
+    name text,
+    wins integer default 0,
+    matches integer default 0,
+    bye integer default 0
+);
 
+create table matches(
+    m_id serial primary key,
+    player1 serial references players(p_id) ON DELETE CASCADE,
+    player2 serial references players(p_id) ON DELETE CASCADE,
+    winner integer NULL
+);
