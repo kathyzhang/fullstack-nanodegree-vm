@@ -6,17 +6,23 @@
 -- You can write comments in this file by starting them with two dashes, like
 -- these lines here.
 
+DROP DATABASE IF EXISTS tournament;
+CREATE DATABASE tournament;
+\c tournament;
+
 create table players(
     p_id serial primary key,
     name text,
-    wins integer default 0,
-    matches integer default 0,
     bye integer default 0
 );
 
 create table matches(
     m_id serial primary key,
     player1 serial references players(p_id) ON DELETE CASCADE,
-    player2 serial references players(p_id) ON DELETE CASCADE,
-    winner integer NULL
+    player2 serial references players(p_id) ON DELETE CASCADE
+);
+
+create table winners(
+    m_id serial references matches(m_id) ON DELETE CASCADE,
+    winner serial references players(p_id) ON DELETE CASCADE
 );

@@ -4,31 +4,34 @@
 #
 
 import psycopg2
-import bleach
 
-def connect():
+def connect(name="tournament"):
     """Connect to the PostgreSQL database.  Returns a database connection."""
-    return psycopg2.connect("dbname=tournament")
+    try:
+        db = psycopg2.connect("dbname={}".format(name))
+        return db
+    except:
+         print("Database connection failed")
 
-def parseQuery(query):
+def parseQuery(query, parameters=None):
     conn = connect()
     c = conn.cursor()
-    c.execute(query)
+    c.execute(query, parameters)
     conn.commit()
     conn.close()
 
-def fetchQuery(query):
+def fetchQuery(query, parameters=None):
     conn = connect()
     c = conn.cursor()
-    c.execute(query)
+    c.execute(query, parameters)
     result = c.fetchall()
+    conn.commit()
     conn.close()
     return result
 
 def deleteMatches():
     """Remove all the match records from the database."""
     parseQuery("DELETE FROM matches")
-    parseQuery("UPDATE players SET wins = 0, matches = 0")
 
 def deletePlayers():
     """Remove all the player records from the database."""
@@ -47,12 +50,7 @@ def registerPlayer(name):
     Args:
       name: the player's full name (need not be unique).
     """
-    name = bleach.clean(name)
-    conn = connect()
-    c = conn.cursor()
-    c.execute("INSERT INTO players (name) VALUES (%s)" , (name, ))
-    conn.commit()
-    conn.close()
+    parseQuery("INSERT INTO players (name) VALUES (%s)" , (name, ))
 
 def playerStandings():
     """Returns a list of the players and their win records, sorted by wins.
@@ -67,13 +65,39 @@ def playerStandings():
         wins: the number of matches the player has won
         matches: the number of matches the player has played
     """
-    query = "SELECT p_id as id, name, wins, matches, bye \
-             FROM players ORDER BY wins DESC"
-    results = fetchQuery(query)
-    ranked_players = [(str(row[0]), str(row[1]), int(row[2]), \
-                       int(row[3]), bool(row[4]))
-                      for row in results]
-    return ranked_players
+    query = "DROP VIEW IF EXISTS wincounter, matchcounter, standings cascade"
+    parseQuery(query)
+
+    query = "CREATE VIEW wincounter as\
+    SELECT players.p_id, players.name, players.bye,\
+           COUNT(winners.winner) as wins\
+    FROM players LEFT JOIN winners ON players.p_id = winners.winner\
+    GROUP BY players.p_id\
+    ORDER BY wins DESC"
+
+    parseQuery(query)
+
+    query = "CREATE VIEW matchcounter as\
+    SELECT p_id, COUNT(m_id) as matches\
+    FROM\
+        (SELECT players.p_id, matches.m_id\
+        FROM players LEFT JOIN matches ON players.p_id = matches.player1\
+        UNION\
+        SELECT players.p_id, matches.m_id\
+        FROM players LEFT JOIN matches ON players.p_id = matches.player2)\
+        AS allMatches\
+    GROUP BY p_id\
+    ORDER BY matches DESC"
+
+    parseQuery(query)
+
+    query = "CREATE VIEW standings as\
+    SELECT wincounter.p_id, name, wins, matches, bye\
+    FROM wincounter JOIN matchcounter ON wincounter.p_id = matchcounter.p_id"
+
+    parseQuery(query)
+
+    return fetchQuery("SELECT p_id, name, wins, matches, bye FROM standings")
 
 def reportMatch(winner, loser, tie):
     """Records the outcome of a single match between two players.
@@ -82,24 +106,17 @@ def reportMatch(winner, loser, tie):
       winner:  the id number of the player who won
       loser:  the id number of the player who lost
     """
-    conn = connect()
-    c = conn.cursor()
+    result = fetchQuery("INSERT INTO matches (player1, player2) \
+               VALUES (%s, %s) RETURNING m_id", (winner, loser))
+    m_id = result[0][0]
     if not tie:
-        c.execute("INSERT INTO matches (player1, player2, winner) \
-                   VALUES (%s, %s, %s)", (winner, loser, winner))
-        c.execute("UPDATE players SET wins = wins + 1, matches = matches + 1 \
-                   WHERE p_id = %s" %(winner))
-        c.execute("UPDATE players SET matches = matches + 1 \
-                   WHERE p_id = %s" %(loser))
+        parseQuery("INSERT INTO winners (m_id, winner) \
+                   VALUES (%s, %s)", (m_id, winner))
     else:
-        c.execute("INSERT INTO matches (player1, player2) \
-                   VALUES (%s, %s)", (winner, loser))
-        c.execute("UPDATE players SET wins = wins + 1, matches = matches + 1 \
-                   WHERE p_id = %s" %(winner))
-        c.execute("UPDATE players SET wins = wins + 1, matches = matches + 1 \
-                   WHERE p_id = %s" %(loser)) # if tie, both players win
-    conn.commit()
-    conn.close()
+        parseQuery("INSERT INTO winners (m_id, winner) \
+                   VALUES (%s, %s)", (m_id, winner))
+        parseQuery("INSERT INTO winners (m_id, winner) \
+                   VALUES (%s, %s)", (m_id, loser))
 
 def swissPairings():
     """Returns a list of pairs of players for the next round of a match.
@@ -143,5 +160,9 @@ def swissPairings():
     return pair_result
 
 def freeWin(playerId):
-    parseQuery("UPDATE players SET wins = wins + 1, matches = matches + 1, \
-    bye = bye + 1 WHERE p_id = %s" %(playerId))
+    parseQuery("UPDATE players SET bye = bye + 1 WHERE p_id = %s" %(playerId))
+    result = fetchQuery("INSERT INTO matches (player1, player2) \
+                       VALUES (%s, %s) RETURNING m_id", (playerId, playerId))
+    m_id = result[0][0]
+    parseQuery("INSERT INTO winners (m_id, winner) \
+                VALUES (%s, %s)", (m_id, playerId))
