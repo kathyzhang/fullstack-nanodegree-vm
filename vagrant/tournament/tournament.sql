@@ -10,19 +10,50 @@ DROP DATABASE IF EXISTS tournament;
 CREATE DATABASE tournament;
 \c tournament;
 
+
 create table players(
     p_id serial primary key,
-    name text,
-    bye integer default 0
+    name text
 );
 
 create table matches(
     m_id serial primary key,
-    player1 serial references players(p_id) ON DELETE CASCADE,
-    player2 serial references players(p_id) ON DELETE CASCADE
+    winner serial references players(p_id) ON DELETE CASCADE,
+    loser serial references players(p_id) ON DELETE CASCADE,
+    tie boolean
 );
 
-create table winners(
-    m_id serial references matches(m_id) ON DELETE CASCADE,
-    winner serial references players(p_id) ON DELETE CASCADE
-);
+CREATE VIEW tiedmatches as
+    (SELECT m_id, winner as p_id
+    FROM matches
+    WHERE tie = true and winner <> loser
+    UNION
+    SELECT m_id, loser as p_id
+    FROM matches
+    WHERE tie = true and winner <> loser);
+
+CREATE VIEW byematches as
+    SELECT m_id, winner as p_id
+    FROM matches
+    WHERE winner = loser;
+
+CREATE VIEW realwinmatches as
+    SELECT m_id, winner as p_id
+    FROM matches
+    WHERE tie = false;
+
+CREATE VIEW lostmatches as
+    SELECT m_id, loser as p_id
+    FROM matches
+    WHERE tie = false;
+
+CREATE VIEW winmatches as
+    SELECT *
+    FROM (SELECT * FROM tiedmatches UNION
+          SELECT * FROM byematches UNION
+          SELECT * FROM realwinmatches) as subquery;
+
+CREATE VIEW allMatches as
+    SELECT *
+    FROM (SELECT * FROM winmatches UNION
+          SELECT * FROM lostmatches) as subquery;
